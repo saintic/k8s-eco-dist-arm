@@ -1,0 +1,5 @@
+在 ARM 架构上构建 Kubernetes 集群相关组件的 ARM 格式的二进制软件包。
+
+因为使用二进制方式部署 k8s 集群时，部分组件没有默认的 ARM 架构下的包，
+比如 CFSSL CONTAINERD RUNC.
+
