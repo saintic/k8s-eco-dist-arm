@@ -16,6 +16,8 @@ readonly GIT_DOWNLOAD_PROXY=https://gitclone.com/
 readonly GO_MOD_PROXY=https://goproxy.cn,direct
 # go二进制包下载地址
 readonly GOLANG_BINARY_URL=https://golang.org/dl/go1.17.2.linux-arm64.tar.gz
+# protoc 二进制包下载地址
+readonly PROTOC_BINARY_URL=https://github.com/protocolbuffers/protobuf/releases/download/v3.17.3/protoc-3.17.3-linux-aarch_64.zip
 # CFSSL GitHub 仓库地址，如果使用了克隆代理加速，注意是否携带协议头http
 readonly CFSSL_GITREPO=github.com/cloudflare/cfssl/
 # Containerd GiHub 仓库地址
@@ -121,18 +123,23 @@ _precheck() {
 }
 
 pkg_download_all() {
-    _gitclone $CFSSL_GITREPO "$CFSSL_VERSION" cfssl-src
+    _gitclone $CFSSL_GITREPO "$CFSSL_VERSION" cfssl-src-${CFSSL_VERSION}
     _checkExitRetcode "git clone cfssl error"
 
-    _gitclone $CONTAINERD_GITREPO "$CONTAINERD_VERSION" containerd-src
+    _gitclone $CONTAINERD_GITREPO "$CONTAINERD_VERSION" containerd-src-${CONTAINERD_VERSION}
     _checkExitRetcode "git clone containerd error"
 
-    _gitclone $RUNC_GITREPO "$RUNC_VERSION" runc-src
+    _gitclone $RUNC_GITREPO "$RUNC_VERSION" runc-src-${RUNC_VERSION}
     _checkExitRetcode "git clone runc error"
+
+    wget -c -O protoc.zip "${HTTP_DOWNLOAD_PROXY}${PROTOC_BINARY_URL}"
+    _checkExitRetcode "download protoc binary package error"
 }
 
 make_cfssl() {
-    cd cfssl-src || exit
+    local pkg="${DIST_DIR}/cfssl/cfssl-${CFSSL_VERSION}.tar.gz"
+    [ -f $pkg ] && return
+    cd cfssl-src-${CFSSL_VERSION} || exit
     # require go.14+
     # Cross Compilation
     # make bin/rice
@@ -140,12 +147,16 @@ make_cfssl() {
     GO111MODULE=on GOPROXY=$GO_MOD_PROXY make
     _checkExitRetcode "build cfssl error"
     cd bin || exit
-    tar zcvf "${DIST_DIR}/cfssl/cfssl-${CFSSL_VERSION}.tar.gz" cfssl cfssljson cfssl-certinfo
+    tar zcvf ${pkg} cfssl cfssljson cfssl-certinfo
     _checkExitRetcode "pack cfssl error"
     cd ../../ || exit
+    echo "Pack cfssl successful"
+    return 0
 }
 
 make_containerd() {
+    local pkg="${DIST_DIR}/containerd/containerd-${CONTAINERD_VERSION}_runc-${RUNC_VERSION}.tar.gz"
+    [ -f $pkg ] && return
     case "$(_os_type)" in
         RHEL|CentOS|Fedora|Aliyun|Kylin):
             yum install -y btrfs-progs-devel libseccomp-devel
@@ -162,30 +173,34 @@ make_containerd() {
         ;;
     esac
 
-    unzip -o protoc.zip -d /usr/local/
-    _checkExitRetcode "protoc unzip error"
+    if [ ! -f /usr/local/bin/protoc ]; then
+        unzip -o protoc.zip -d /usr/local/
+        _checkExitRetcode "protoc unzip error"
+    fi
 
     local cbd="containerd-bin"
     [ -d $cbd ] && rm -rf $cbd
     mkdir $cbd
 
     # runc require go1.15+ and libseccomp-devel
-    cd runc-src || exit
+    cd runc-src-${RUNC_VERSION} || exit
     GO111MODULE=on GOPROXY=$GO_MOD_PROXY make
     _checkExitRetcode "build runc error"
     cp -f runc ../${cbd}/
 
     # container require go1.14+ and btrfs-progs-devel
-    cd ../containerd-src || exit
+    cd ../containerd-src-${CONTAINERD_VERSION} || exit
     GO111MODULE=on GOPROXY=$GO_MOD_PROXY make
     _checkExitRetcode "build containerd error"
     cp -f bin/* ../${cbd}
 
     cd "../${cbd}" || exit
-    tar zcvf "${DIST_DIR}/containerd/containerd-${CONTAINERD_VERSION}.tar.gz" "."
+    tar zcvf "${pkg}" "."
     _checkExitRetcode "pack containerd error"
 
     cd .. || exit
+    echo "pack containerd successful"
+    return 0
 }
 
 make_pkg() {
